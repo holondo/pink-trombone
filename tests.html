@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pink Trombone IPA Tests</title>
+  <link rel="stylesheet" href="vendor/quicksand/quicksand.css">
+  <style>
+    body {
+      margin: 32px;
+      color: #2f2a35;
+      font-family: Quicksand, Helvetica, Arial, sans-serif;
+    }
+    h1 {
+      color: #7a3f7f;
+      font-size: 24px;
+    }
+    .result {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 12px;
+      max-width: 720px;
+      border-bottom: 1px solid #eadfec;
+      padding: 8px 0;
+    }
+    .ok {
+      color: #27705d;
+      font-weight: 700;
+    }
+    .fail {
+      color: #9b2743;
+      font-weight: 700;
+    }
+  </style>
+  <script src="src/phonetics/MappingLoader.js"></script>
+  <script src="src/phonetics/IPATokenizer.js"></script>
+  <script src="src/phonetics/PhonemeClassifier.js"></script>
+  <script src="src/phonetics/ParameterDiff.js"></script>
+  <script src="src/phonetics/ParameterCapture.js"></script>
+  <script src="src/phonetics/PhonemeScheduler.js"></script>
+  <script src="src/phonetics/tests.js"></script>
+</head>
+<body>
+  <h1>Pink Trombone IPA Tests</h1>
+  <div id="testResults">Running...</div>
+  <script>
+    runPhoneticsTests().then(function(results) {
+      document.getElementById("testResults").innerHTML = results.map(function(result) {
+        return '<div class="result"><span class="' + (result.ok ? 'ok' : 'fail') + '">' +
+          (result.ok ? 'PASS' : 'FAIL') + '</span><span>' + result.name +
+          (result.error ? ': ' + result.error : '') + '</span></div>';
+      }).join("");
+    }).catch(function(error) {
+      document.getElementById("testResults").textContent = error.message;
+    });
+  </script>
+</body>
+</html>

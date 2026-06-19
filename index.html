@@ -1,5 +1,8 @@
 
+<!doctype html>
 <html>
+<head>
+  <meta charset="utf-8">
 <!--
 
 P I N K   T R O M B O N E
@@ -48,7 +51,6 @@ IN THE SOFTWARE.
 
 -->
 
-<head>
   <title>Pink Trombone</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -57,6 +59,18 @@ IN THE SOFTWARE.
   <script src="vendor/jquery/jquery-3.4.0.min.js"></script>
   <script src="vendor/i18n4js/i18n4js-1.3.0.min.js"></script>
   <script src="vendor/fontfaceobserver/fontfaceobserver.js"></script>
+  <script src="src/phonetics/MappingLoader.js"></script>
+  <script src="src/phonetics/IPATokenizer.js"></script>
+  <script src="src/phonetics/PhonemeClassifier.js"></script>
+  <script src="src/phonetics/ParameterDiff.js"></script>
+  <script src="src/phonetics/ParameterCapture.js"></script>
+  <script src="src/phonetics/TractOverlayRenderer.js"></script>
+  <script src="src/phonetics/PhonemePalette.js"></script>
+  <script src="src/phonetics/PhonemeKeyboard.js"></script>
+  <script src="src/phonetics/PhonemeScheduler.js"></script>
+  <script src="src/phonetics/PinkTromboneController.js"></script>
+  <script src="src/phonetics/ConfigStore.js"></script>
+  <script src="src/phonetics/ConfigModeUI.js"></script>
 </head>
 
 <body style="margin: 0; padding: 0; background-color:white">
@@ -67,6 +81,110 @@ IN THE SOFTWARE.
 <canvas id="backCanvas" width="600" height="600"
         style = "position: absolute; z-index: 0; background-color:transparent; margin: 0; padding: 0;">
 </canvas>
+
+<aside id="phoneticsPanel" class="phonetics-panel" aria-label="IPA playback and phoneme calibration">
+  <header class="pt-panel-header">
+    <h1>Pink Trombone IPA</h1>
+    <div class="pt-header-controls">
+      <label class="pt-mode-select">
+        <span>Mode</span>
+        <select id="phoneticsMode">
+          <option value="manual">Manual</option>
+          <option value="playback">Playback</option>
+          <option value="calibrator">Calibrate</option>
+        </select>
+      </label>
+      <label class="pt-mode-select">
+        <span>Config Set</span>
+        <select id="configSetSelect">
+          <option value="local">Saved overrides</option>
+          <option value="base">Base mapping</option>
+        </select>
+      </label>
+    </div>
+  </header>
+  <p id="phoneticsStatus" class="pt-status">Loading IPA mapping...</p>
+
+  <section id="manualPanel" class="pt-panel-section">
+    <p class="pt-note">Manual mode leaves Pink Trombone as the original direct-control instrument.</p>
+  </section>
+
+  <section id="phoneticPlaybackPanel" class="pt-panel-section" hidden>
+    <textarea id="ipaInput" rows="5" spellcheck="false">mama
+pata
+sasa
+t͡ʃa
+d͡ʒu</textarea>
+    <div class="pt-button-row">
+      <button type="button" id="playPhonetics">Play</button>
+      <button type="button" id="stopPhonetics">Stop</button>
+      <label class="pt-inline-check"><input type="checkbox" id="loopPhonetics"> Loop</label>
+    </div>
+    <div class="pt-slider-grid">
+      <label><span>Tempo</span><input type="range" id="durationMultiplier" min="0.5" max="2" step="0.05" value="1"><output id="durationMultiplierValue">1.00x</output></label>
+      <label><span>Pitch</span><input type="range" id="pitchControl" min="80" max="240" step="1" value="140"><output id="pitchControlValue">140 Hz</output></label>
+      <label><span>Intensity</span><input type="range" id="intensityControl" min="0.2" max="1.4" step="0.05" value="1"><output id="intensityControlValue">1.00x</output></label>
+    </div>
+    <label class="pt-inline-check"><input type="checkbox" id="autoVoice" checked> Auto voice</label>
+    <div class="pt-readout"><span>Current</span><strong id="currentPhoneme">Stopped</strong></div>
+    <h2>Phoneme keyboard</h2>
+    <div id="playbackPalette" class="pt-palette"></div>
+    <h2>Warnings</h2>
+    <div id="ipaWarnings" class="pt-warning-panel"><p class="pt-muted">No warnings.</p></div>
+    <h2>Timeline</h2>
+    <div id="phonemeTimeline" class="pt-timeline"><p class="pt-muted">No events scheduled.</p></div>
+  </section>
+
+  <section id="calibratorPanel" class="pt-panel-section" hidden>
+    <h2>Load phoneme</h2>
+    <div id="calibratorPalette" class="pt-palette"></div>
+    <div class="pt-readout">
+      <span id="selectedPhonemeLabel">No phoneme selected</span>
+      <strong id="phonemeTemplateBadge">template</strong>
+    </div>
+    <div id="templateSummary" class="pt-note"></div>
+    <div class="pt-button-row">
+      <button type="button" id="previewDraft">Preview draft</button>
+      <button type="button" id="compareBase">Compare base</button>
+      <button type="button" id="revertDraft">Revert draft</button>
+      <button type="button" id="saveDraftOverride">Save draft</button>
+    </div>
+    <div class="pt-button-row">
+      <button type="button" id="removeSavedOverride">Remove saved override</button>
+      <button type="button" id="resetAllOverrides">Reset all saved</button>
+    </div>
+    <p id="configStatus" class="pt-status"></p>
+    <h2>Recording to draft</h2>
+    <div class="pt-note">Interact with Pink Trombone manually, record a posture, then apply it to the editable draft below.</div>
+    <div class="pt-button-row">
+      <button type="button" id="startCapture">Start recording</button>
+      <button type="button" id="stopCapture">Stop</button>
+      <button type="button" id="captureCurrent">Use current posture</button>
+    </div>
+    <label class="pt-field">
+      <span>Capture target</span>
+      <select id="captureWindow"></select>
+    </label>
+    <div id="captureStats" class="pt-readout"><span>Samples</span><strong>0</strong></div>
+    <div id="sectionApplyPanel" class="pt-chip-row"></div>
+    <div id="capturedSummary" class="pt-diff-panel"><p class="pt-muted">No recording applied yet.</p></div>
+    <h2>Draft parameters</h2>
+    <div id="calibrationEditor" class="pt-config-editor"></div>
+    <h2>Draft changes</h2>
+    <div id="parameterDiff" class="pt-diff-panel"></div>
+    <div class="pt-browser-toolbar">
+      <h2>Saved custom phonemes</h2>
+      <span id="mappingBrowserCount"></span>
+    </div>
+    <div id="mappingBrowserList" class="pt-mapping-list"></div>
+    <div class="pt-button-row">
+      <button type="button" id="exportOverrides">Export override JSON</button>
+      <button type="button" id="importOverrides">Import override JSON</button>
+      <button type="button" id="directSaveOverrides" hidden>Save to file</button>
+      <input id="overrideImportFile" type="file" accept="application/json,.json" hidden>
+    </div>
+  </section>
+</aside>
 
 
 <script>
@@ -142,13 +260,40 @@ IN THE SOFTWARE.
         tractCanvas.addEventListener('touchend', UI.endTouches);
         tractCanvas.addEventListener('touchcancel', UI.endTouches);
 
-        document.addEventListener('touchstart', (function(event) {event.preventDefault();}) );
+        document.addEventListener('touchstart', (function(event) {
+          if (UI.isPhoneticsPanelEvent(event)) return;
+          event.preventDefault();
+        }) );
 
         document.addEventListener('mousedown', (function(event)
-        {UI.mouseDown = true; event.preventDefault(); UI.startMouse(event);}));
+        {
+          if (UI.isPhoneticsPanelEvent(event)) return;
+          UI.mouseDown = true; event.preventDefault(); UI.startMouse(event);
+        }));
         document.addEventListener('mouseup', (function(event)
-        {UI.mouseDown = false; UI.endMouse(event);}));
+        {
+          if (UI.isPhoneticsPanelEvent(event)) return;
+          UI.mouseDown = false; UI.endMouse(event);
+        }));
         document.addEventListener('mousemove', UI.moveMouse);
+      },
+
+      isPhoneticsPanelEvent : function(event)
+      {
+        return event && event.target && event.target.closest && event.target.closest("#phoneticsPanel");
+      },
+
+      getCanvasPoint : function(pointer)
+      {
+        var rect = tractCanvas.getBoundingClientRect();
+        var clientX = pointer.clientX;
+        var clientY = pointer.clientY;
+        if (clientX == null && pointer.pageX != null) clientX = pointer.pageX - window.pageXOffset;
+        if (clientY == null && pointer.pageY != null) clientY = pointer.pageY - window.pageYOffset;
+        return {
+          x: (clientX - rect.left) / rect.width * 600,
+          y: (clientY - rect.top) / rect.height * 600
+        };
       },
 
       draw : function()
@@ -303,8 +448,9 @@ IN THE SOFTWARE.
           var touches = event.changedTouches;
           for (var j=0; j<touches.length; j++)
           {
-            var x = (touches[j].pageX-UI.left_margin)/UI.width*600;
-            var y = (touches[j].pageY-UI.top_margin)/UI.width*600;
+            var point = UI.getCanvasPoint(touches[j]);
+            var x = point.x;
+            var y = point.y;
           }
           UI.instructionsScreenHandleTouch(x,y);
           return;
@@ -320,8 +466,9 @@ IN THE SOFTWARE.
           touch.fricative_intensity = 0;
           touch.alive = true;
           touch.id = touches[j].identifier;
-          touch.x = (touches[j].pageX-UI.left_margin)/UI.width*600;
-          touch.y = (touches[j].pageY-UI.top_margin)/UI.width*600;
+          var point = UI.getCanvasPoint(touches[j]);
+          touch.x = point.x;
+          touch.y = point.y;
           touch.index = TractUI.getIndex(touch.x, touch.y);
           touch.diameter = TractUI.getDiameter(touch.x, touch.y);
           UI.touchesWithMouse.push(touch);
@@ -348,8 +495,9 @@ IN THE SOFTWARE.
           var touch = UI.getTouchById(touches[j].identifier);
           if (touch != 0)
           {
-            touch.x = (touches[j].pageX-UI.left_margin)/UI.width*600;
-            touch.y = (touches[j].pageY-UI.top_margin)/UI.width*600;
+            var point = UI.getCanvasPoint(touches[j]);
+            touch.x = point.x;
+            touch.y = point.y;
             touch.index = TractUI.getIndex(touch.x, touch.y);
             touch.diameter = TractUI.getDiameter(touch.x, touch.y);
           }
@@ -391,8 +539,9 @@ IN THE SOFTWARE.
         }
         if (UI.inInstructionsScreen)
         {
-          var x = (event.pageX-tractCanvas.offsetLeft)/UI.width*600;
-          var y = (event.pageY-tractCanvas.offsetTop)/UI.width*600;
+          var point = UI.getCanvasPoint(event);
+          var x = point.x;
+          var y = point.y;
           UI.instructionsScreenHandleTouch(x,y);
           return;
         }
@@ -403,8 +552,9 @@ IN THE SOFTWARE.
         touch.endTime = 0;
         touch.alive = true;
         touch.id = "mouse"+Math.random();
-        touch.x = (event.pageX-tractCanvas.offsetLeft)/UI.width*600;
-        touch.y = (event.pageY-tractCanvas.offsetTop)/UI.width*600;
+        var point = UI.getCanvasPoint(event);
+        touch.x = point.x;
+        touch.y = point.y;
         touch.index = TractUI.getIndex(touch.x, touch.y);
         touch.diameter = TractUI.getDiameter(touch.x, touch.y);
         UI.mouseTouch = touch;
@@ -417,8 +567,9 @@ IN THE SOFTWARE.
       {
         var touch = UI.mouseTouch;
         if (!touch.alive) return;
-        touch.x = (event.pageX-tractCanvas.offsetLeft)/UI.width*600;
-        touch.y = (event.pageY-tractCanvas.offsetTop)/UI.width*600;
+        var point = UI.getCanvasPoint(event);
+        touch.x = point.x;
+        touch.y = point.y;
         touch.index = TractUI.getIndex(touch.x, touch.y);
         touch.diameter = TractUI.getDiameter(touch.x, touch.y);
         UI.handleTouches();
@@ -464,22 +615,34 @@ IN THE SOFTWARE.
 
       shapeToFitScreen : function()
       {
-        if (window.innerWidth <= window.innerHeight)
+        var availableWidth = Math.max(320, window.innerWidth);
+        var availableHeight = window.innerHeight;
+        if (availableWidth <= availableHeight)
         {
-          this.width = window.innerWidth-80;
+          this.width = availableWidth-80;
           this.left_margin = 40;
-          this.top_margin = 0.5*(window.innerHeight-this.width);
+          this.top_margin = 0.5*(availableHeight-this.width);
         }
         else
         {
-          this.width = window.innerHeight-80;
-          this.left_margin = 0.5*(window.innerWidth-this.width);
+          this.width = availableHeight-80;
+          this.left_margin = 0.5*(availableWidth-this.width);
           this.top_margin = 40;
         }
-        document.body.style.marginLeft = this.left_margin;
-        document.body.style.marginTop = this.top_margin;
-        tractCanvas.style.width = this.width;
-        backCanvas.style.width = this.width;
+        this.width = Math.max(240, this.width);
+        var canvasLeft = Math.round(this.left_margin) + "px";
+        var canvasTop = Math.round(this.top_margin) + "px";
+        var canvasSize = Math.round(this.width) + "px";
+        document.body.style.marginLeft = "0px";
+        document.body.style.marginTop = "0px";
+        tractCanvas.style.left = canvasLeft;
+        tractCanvas.style.top = canvasTop;
+        tractCanvas.style.width = canvasSize;
+        tractCanvas.style.height = canvasSize;
+        backCanvas.style.left = canvasLeft;
+        backCanvas.style.top = canvasTop;
+        backCanvas.style.width = canvasSize;
+        backCanvas.style.height = canvasSize;
       }
     }
 
@@ -1741,12 +1904,26 @@ IN THE SOFTWARE.
     Glottis.init();
     Tract.init();
     TractUI.init();
+    if (window.PhoneticsApp && typeof window.PhoneticsApp.bootstrap === "function") {
+      window.PhoneticsApp.bootstrap({
+        AudioSystem: AudioSystem,
+        UI: UI,
+        Glottis: Glottis,
+        Tract: Tract,
+        TractUI: TractUI,
+        tractCtx: tractCtx
+      });
+    }
+    UI.shapeToFitScreen();
 
     requestAnimationFrame(redraw);
     function redraw(highResTimestamp)
     {
       UI.shapeToFitScreen();
       TractUI.draw();
+      if (window.PhoneticsApp && typeof window.PhoneticsApp.drawOverlay === "function") {
+        window.PhoneticsApp.drawOverlay();
+      }
       UI.draw();
       requestAnimationFrame(redraw);
       time = Date.now()/1000;
@@ -1944,6 +2121,8 @@ IN THE SOFTWARE.
       new FontFaceObserver('Quicksand', { weight: 400 }).load(),
       new FontFaceObserver('Quicksand', { weight: 700 }).load(),
     ]);
+  }).catch(function() {
+    return null;
   }).then(function() {
     start();
     addLanguageSwitcher();
