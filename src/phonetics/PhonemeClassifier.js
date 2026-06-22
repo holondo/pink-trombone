@@ -38,10 +38,10 @@
     if (category.indexOf("vowel") !== -1 || (params.features && params.features.syllabic)) return "vowel";
     if (affricate) return "affricate";
     if (nasal) return "nasal";
-    if (noisy || manner === "fricative" || label.indexOf("fricative") !== -1 || support.indexOf("fricative") !== -1) return "fricative";
-    if (stop) return "stop";
-    if (approximant) return "approximant";
     if (tap) return "tap";
+    if (noisy || manner === "fricative" || label.indexOf("fricative") !== -1 || support.indexOf("fricative") !== -1) return "fricative";
+    if (approximant) return "approximant";
+    if (stop) return "stop";
     return "other";
   }
 
@@ -49,64 +49,80 @@
     vowel: {
       title: "Vowel Calibrator",
       capturePrimary: "stable posture",
+      captureGuide: "Hold a steady vowel posture. The Studio keeps the longest stable voiced region.",
       preview: function(token) { return token; },
       windows: ["Use Current", "Use Average", "Use Last 500ms"],
+      phases: ["sustain"],
       sections: ["glottis", "tongue", "lips", "velum"],
       fields: ["glottis.ui_frequency", "glottis.ui_tenseness", "glottis.intensity", "glottis.loudness", "tract.tongue_index", "tract.tongue_diameter", "tract.lip_diameter", "tract.velum_target"]
     },
     nasal: {
       title: "Nasal Calibrator",
       capturePrimary: "oral closure + open velum",
+      captureGuide: "Capture the oral closure and open velum together (multitouch) or sequentially (mouse).",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Capture closure", "Use Average", "Use Last 500ms"],
-      sections: ["glottis", "closure", "velum"],
+      phases: ["nasal closure", "velum"],
+      sections: ["glottis", "closure", "velum", "timing"],
       fields: ["glottis.ui_frequency", "glottis.ui_tenseness", "glottis.intensity", "glottis.loudness", "tract.velum_target", "tract.constrictions"]
     },
     stop: {
       title: "Stop Calibrator",
       capturePrimary: "closure, hold, release",
+      captureGuide: "Close the tract completely, hold briefly, then release. The carrier vowels are excluded.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Capture closure", "Use Last 300ms"],
+      phases: ["closure", "release"],
       sections: ["closure", "release", "timing", "glottis"],
       fields: ["glottis.voiced", "glottis.ui_tenseness", "glottis.intensity", "glottis.loudness", "tract.velum_target", "tract.constrictions", "release.transient", "release.strength", "timing.closure_ms", "duration_ms"]
     },
     fricative: {
       title: "Fricative Calibrator",
       capturePrimary: "narrow constriction + turbulence",
+      captureGuide: "Hold a narrow non-closed constriction until turbulence is stable.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Capture constriction", "Use Average", "Use Last 500ms"],
+      phases: ["frication"],
       sections: ["constriction", "turbulence", "glottis"],
       fields: ["glottis.voiced", "glottis.ui_tenseness", "glottis.intensity", "glottis.loudness", "tract.constrictions", "noise.turbulence", "noise.turbulence_intensity", "duration_ms"]
     },
     affricate: {
       title: "Affricate Calibrator",
       capturePrimary: "closure stage + fricative release",
+      captureGuide: "Perform one gesture: complete closure followed immediately by sustained frication.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Capture closure stage", "Capture frication stage"],
+      phases: ["closure", "frication", "release"],
       sections: ["closure", "frication", "timing", "release"],
       fields: ["glottis.voiced", "tract.constrictions", "noise.turbulence_intensity", "release.transient", "timing.closure_ms", "timing.frication_ms", "duration_ms"]
     },
     approximant: {
       title: "Approximant Calibrator",
       capturePrimary: "partial constriction + transition posture",
+      captureGuide: "Hold the closest stable target without producing turbulent noise.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Use Current", "Use Average", "Use Last 500ms"],
+      phases: ["target"],
       sections: ["glottis", "tongue", "partial constriction", "lips"],
       fields: ["glottis.ui_frequency", "glottis.ui_tenseness", "glottis.intensity", "glottis.loudness", "tract.tongue_index", "tract.tongue_diameter", "tract.lip_diameter", "tract.constrictions", "duration_ms"]
     },
     tap: {
       title: "Tap/Trill Calibrator",
       capturePrimary: "short approximated contact",
+      captureGuide: "Perform the brief contact or repeated contacts in one continuous gesture.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Capture contact", "Use Last 200ms"],
+      phases: ["contact", "release"],
       sections: ["brief contact", "timing", "glottis"],
       fields: ["glottis.voiced", "tract.constrictions", "duration_ms", "metadata.approximation_level"]
     },
     other: {
       title: "General Calibrator",
       capturePrimary: "best available articulatory target",
+      captureGuide: "Record the complete gesture, then select the useful target on the timeline.",
       preview: function(token) { return "a " + token + " a"; },
       windows: ["Use Current", "Use Average", "Use Last 500ms"],
+      phases: ["target"],
       sections: ["glottis", "tract", "noise", "release"],
       fields: ["glottis", "tract", "noise", "release", "duration_ms"]
     }

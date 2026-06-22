@@ -107,6 +107,12 @@
     this.draftParams = null;
     this.captureDraftParams = null;
     this.captureTimer = 0;
+    this.captureSession = null;
+    this.captureAnalysis = null;
+    this.captureSelection = null;
+    this.selectedCapturePhaseId = "";
+    this.captureTimeline = null;
+    this.captureState = "idle";
   }
 
   PhoneticsRuntime.prototype.init = function() {
@@ -119,6 +125,12 @@
     this.configStore = new ns.ConfigStore();
     this.controller = new ns.PinkTromboneController(this.synth);
     this.capture = new ns.ParameterCapture(this.synth);
+    this.captureTimeline = new ns.CaptureTimeline(this.elements.captureTimeline, {
+      onPhaseSelect: this.selectCapturePhase.bind(this),
+      onPhaseChange: this.changeCapturePhase.bind(this),
+      onSelectionChange: this.changeCaptureSelection.bind(this),
+      onScrub: this.scrubCapture.bind(this)
+    });
     this.overlay = new ns.TractOverlayRenderer(this.synth);
     this.keyboard = new ns.PhonemeKeyboard(this.elements.keyboard, {
       onAction: this.handleKeyboardAction.bind(this)
@@ -199,19 +211,29 @@
             '<p id="configStatus" class="pt-status"></p>' +
           '</section>' +
           '<section class="pt-card pt-recorder-card">' +
-            '<h2>Recorder</h2>' +
+            '<div class="pt-recorder-heading"><div><h2>Take recorder</h2><span>Pink Trombone UI parameters — no audio recording</span></div><strong id="captureStateBadge" data-state="idle">Idle</strong></div>' +
+            '<div id="captureGuide" class="pt-note"></div>' +
             '<div class="pt-button-row">' +
-              '<button type="button" id="startCapture">Start capture</button>' +
-              '<button type="button" id="stopCapture">Stop</button>' +
-              '<button type="button" id="captureCurrent">Use current posture</button>' +
+              '<button type="button" id="startCapture">Record take</button>' +
+              '<button type="button" id="stopCapture" disabled>Stop recording</button>' +
+              '<button type="button" id="captureCurrent">Take snapshot</button>' +
             '</div>' +
-            '<label class="pt-field"><span>Capture target</span><select id="captureWindow"></select></label>' +
-            '<div id="captureStats" class="pt-readout"><span>Samples</span><strong>0</strong></div>' +
+            '<div id="captureStats" class="pt-capture-stats"><span><small>Frames</small><strong>0</strong></span><span><small>Duration</small><strong>0 ms</strong></span><span><small>Phases</small><strong>0</strong></span></div>' +
+            '<div class="pt-take-toolbar">' +
+              '<button type="button" id="autoSegmentCapture" disabled>Auto-segment</button>' +
+              '<button type="button" id="previewCapture" disabled>Preview selection</button>' +
+              '<label class="pt-inline-check"><input type="checkbox" id="loopCapture"> Loop</label>' +
+            '</div>' +
+            '<div class="pt-capture-timeline-wrap">' +
+              '<canvas id="captureTimeline" class="pt-capture-timeline" aria-label="Captured Pink Trombone parameter timeline"></canvas>' +
+              '<div class="pt-timeline-legend"><span><i class="is-selection"></i>Selected</span><span><i class="is-playhead"></i>Playhead</span><span>Tracks show the immutable raw take</span><span>Drag phase edges to tune timing</span></div>' +
+            '</div>' +
+            '<div id="capturePhaseInspector" class="pt-phase-inspector"><p class="pt-muted">Record a take to inspect and edit its phases.</p></div>' +
+            '<div><h3>Parameters to update</h3><div id="sectionApplyPanel" class="pt-chip-row"></div></div>' +
             '<div class="pt-button-row">' +
-              '<button type="button" id="applyCaptureAll">Apply capture to draft</button>' +
-              '<button type="button" id="discardCapture">Discard capture</button>' +
+              '<button type="button" id="applyCaptureAll" disabled>Build draft from take</button>' +
+              '<button type="button" id="discardCapture" disabled>Delete take</button>' +
             '</div>' +
-            '<div id="sectionApplyPanel" class="pt-chip-row"></div>' +
             '<div id="capturedSummary" class="pt-diff-panel"><p class="pt-muted">No capture draft yet.</p></div>' +
           '</section>' +
           '<section class="pt-card pt-editor-card">' +
@@ -267,8 +289,11 @@
       diff: byId("parameterDiff"),
       sectionApply: byId("sectionApplyPanel"),
       configStatus: byId("configStatus"),
-      captureWindow: byId("captureWindow"),
+      captureStateBadge: byId("captureStateBadge"),
+      captureGuide: byId("captureGuide"),
       captureStats: byId("captureStats"),
+      captureTimeline: byId("captureTimeline"),
+      capturePhaseInspector: byId("capturePhaseInspector"),
       capturedSummary: byId("capturedSummary"),
       browserList: byId("mappingBrowserList"),
       browserCount: byId("mappingBrowserCount"),
@@ -329,11 +354,15 @@
     byId("startCapture").addEventListener("click", function() { self.startCapture(); });
     byId("stopCapture").addEventListener("click", function() { self.stopCapture(); });
     byId("captureCurrent").addEventListener("click", function() { self.captureCurrent(); });
+    byId("autoSegmentCapture").addEventListener("click", function() { self.autoSegmentCapture(); });
+    byId("previewCapture").addEventListener("click", function() { self.previewCapture(); });
     byId("applyCaptureAll").addEventListener("click", function() { self.applyCapture("all"); });
     byId("discardCapture").addEventListener("click", function() { self.discardCapture(); });
-    this.elements.sectionApply.addEventListener("click", function(event) {
-      var button = event.target.closest && event.target.closest("[data-section]");
-      if (button) self.applyCapture(button.dataset.section);
+    this.elements.capturePhaseInspector.addEventListener("change", function(event) {
+      if (event.target.dataset.phaseField) self.editCapturePhase(event.target.dataset.phaseField, event.target);
+    });
+    this.elements.capturePhaseInspector.addEventListener("input", function(event) {
+      if (event.target.dataset.phaseParam) self.editCapturePhaseParameter(event.target.dataset.phaseParam, event.target);
     });
     this.elements.browserList.addEventListener("click", function(event) {
       var button = event.target.closest && event.target.closest("[data-token][data-action]");
@@ -361,6 +390,10 @@
     this.controller.onUpdate = function(state) {
       self.updateCurrentPhoneme(state);
       self.overlay.setActiveLabel(state.event ? state.event.token + " / " + state.stage : "");
+    };
+    this.controller.onCaptureUpdate = function(state) {
+      if (self.captureTimeline) self.captureTimeline.setPlayhead(state.timeMs || 0);
+      if (state.done) self.setCaptureState("review", "Take preview finished.");
     };
     this.updateControlLabels();
   };
@@ -395,6 +428,16 @@
 
   PhoneticsRuntime.prototype.setTool = function(tool, open) {
     if (!this.tools.hasOwnProperty(tool)) return;
+    if (!open && tool === "calibrator" && this.capture && this.capture.recording) this.stopCapture();
+    if (open && tool === "keyboard") {
+      if (this.capture && this.capture.recording) this.stopCapture();
+      this.tools.calibrator = false;
+      this.elements.calibrator.hidden = true;
+    }
+    if (open && tool === "calibrator") {
+      this.tools.keyboard = false;
+      this.elements.keyboardLayer.hidden = true;
+    }
     this.tools[tool] = Boolean(open);
     if (tool === "playback") this.elements.playback.hidden = !open;
     if (tool === "keyboard") this.elements.keyboardLayer.hidden = !open;
@@ -522,6 +565,7 @@
     }
     if (payload.action === "load") {
       this.selectToken(payload.token);
+      this.setTool("keyboard", false);
       this.setTool("calibrator", true);
     }
   };
@@ -555,7 +599,7 @@
     this.baseParams = this.getBaseParams(this.currentToken);
     this.activeParams = this.getPhonemeForConfig(this.currentToken, this.activeConfigSet) || this.baseParams;
     this.draftParams = clone(this.activeParams);
-    this.captureDraftParams = null;
+    this.resetCaptureSession();
     this.renderDraftHeader();
     this.renderEditor();
     this.renderCaptureTargets();
@@ -571,7 +615,7 @@
     this.baseParams = this.getBaseParams(this.currentToken);
     this.activeParams = this.getPhonemeForConfig(this.currentToken, this.activeConfigSet) || this.baseParams;
     this.draftParams = clone(this.activeParams);
-    this.captureDraftParams = null;
+    this.resetCaptureSession();
     this.renderDraftHeader();
     this.renderEditor();
     this.renderCaptureTargets();
@@ -619,6 +663,16 @@
     html += field("Velum target", "tract.velum_target", params.tract.velum_target, { min: 0.01, max: 0.5, step: 0.01, range: true });
     html += "</div></fieldset>";
     html += '<fieldset><legend>Constrictions</legend><div id="constrictionRows">' + this.renderConstrictions(params.tract.constrictions || []) + '</div><button type="button" id="addConstriction">Add constriction</button></fieldset>';
+    if (params.gesture && Array.isArray(params.gesture.phases) && params.gesture.phases.length) {
+      html += '<fieldset><legend>Gesture phases</legend><div class="pt-gesture-list">' + params.gesture.phases.map(function(gesturePhase, phaseIndex) {
+        return '<div class="pt-gesture-row">' +
+          '<label><span>Type</span><input type="text" data-path="gesture.phases.' + phaseIndex + '.type" value="' + escapeHtml(gesturePhase.type || "phase") + '"></label>' +
+          '<label><span>Start ms</span><input type="number" data-value-type="number" min="0" step="1" data-path="gesture.phases.' + phaseIndex + '.start_ms" value="' + escapeHtml(gesturePhase.start_ms || 0) + '"></label>' +
+          '<label><span>End ms</span><input type="number" data-value-type="number" min="1" step="1" data-path="gesture.phases.' + phaseIndex + '.end_ms" value="' + escapeHtml(gesturePhase.end_ms || params.duration_ms) + '"></label>' +
+          '<small>' + escapeHtml(shortJson(gesturePhase.target || {})) + '</small>' +
+        '</div>';
+      }).join("") + '</div></fieldset>';
+    }
     html += '<fieldset><legend>Noise, Release, Timing</legend><div class="pt-editor-grid">';
     html += field("Turbulence", "noise.turbulence", params.noise.turbulence, { type: "checkbox" });
     html += field("Turbulence intensity", "noise.turbulence_intensity", params.noise.turbulence_intensity, { min: 0, max: 1, step: 0.01, range: true });
@@ -663,6 +717,7 @@
       setPath(params, control.dataset.path, readValue(control));
     });
     params.timing.duration_ms = params.duration_ms;
+    if (params.gesture) params.gesture.duration_ms = params.duration_ms;
     var constrictions = [];
     this.elements.editor.querySelectorAll("[data-constriction-row]").forEach(function(row) {
       var constriction = {};
@@ -705,71 +760,310 @@
   PhoneticsRuntime.prototype.renderCaptureTargets = function() {
     if (!this.draftParams) return;
     var template = ns.getCalibrationTemplate(this.draftParams);
-    this.elements.captureWindow.innerHTML = template.windows.map(function(label) {
-      var value = label.toLowerCase().replace(/\s+/g, "-");
-      return '<option value="' + escapeHtml(value) + '">' + escapeHtml(label) + "</option>";
-    }).join("");
+    this.elements.captureGuide.innerHTML = '<strong>' + escapeHtml(template.capturePrimary) + '</strong><br>' + escapeHtml(template.captureGuide || "Record the useful articulatory target.");
     this.renderSectionChips();
+    this.renderCaptureTimeline();
   };
 
   PhoneticsRuntime.prototype.renderSectionChips = function() {
     var template = this.draftParams ? ns.getCalibrationTemplate(this.draftParams) : { sections: [] };
-    var buttons = template.sections.map(function(section) {
-      return '<button type="button" data-section="' + escapeHtml(section) + '">Apply ' + escapeHtml(section) + "</button>";
+    var controls = template.sections.map(function(section) {
+      return '<label class="pt-parameter-chip"><input type="checkbox" data-capture-section="' + escapeHtml(section) + '" checked> ' + escapeHtml(section) + "</label>";
     });
-    this.elements.sectionApply.innerHTML = buttons.join("");
-    this.elements.sectionApply.querySelectorAll("button").forEach(function(button) {
-      button.disabled = !this.captureDraftParams;
+    this.elements.sectionApply.innerHTML = controls.join("");
+    this.elements.sectionApply.querySelectorAll("input").forEach(function(control) {
+      control.disabled = !this.captureDraftParams;
     }, this);
     byId("applyCaptureAll").disabled = !this.captureDraftParams;
-    byId("discardCapture").disabled = !this.captureDraftParams;
+    byId("discardCapture").disabled = !this.captureSession;
+  };
+
+  PhoneticsRuntime.prototype.setCaptureState = function(state, message) {
+    this.captureState = state || "idle";
+    var labels = { idle: "Idle", recording: "Recording", review: "Review", preview: "Preview" };
+    this.elements.captureStateBadge.textContent = labels[this.captureState] || this.captureState;
+    this.elements.captureStateBadge.dataset.state = this.captureState;
+    byId("startCapture").disabled = this.captureState === "recording";
+    byId("captureCurrent").disabled = this.captureState === "recording";
+    byId("stopCapture").disabled = this.captureState !== "recording";
+    byId("autoSegmentCapture").disabled = !this.captureSession || this.captureState === "recording";
+    byId("previewCapture").disabled = !this.captureSession || this.captureState === "recording";
+    byId("discardCapture").disabled = !this.captureSession;
+    if (message !== undefined) this.setConfigStatus(message);
+  };
+
+  PhoneticsRuntime.prototype.resetCaptureSession = function(message) {
+    if (this.captureTimer) clearInterval(this.captureTimer);
+    this.captureTimer = 0;
+    if (this.controller) this.controller.stop(false);
+    this.capture.clear();
+    this.captureSession = null;
+    this.captureAnalysis = null;
+    this.captureSelection = null;
+    this.captureDraftParams = null;
+    this.selectedCapturePhaseId = "";
+    this.renderCaptureStats();
+    this.renderCaptureInspector();
+    this.renderCaptureSummary();
+    this.renderSectionChips();
+    this.renderCaptureTimeline();
+    this.updateOverlay();
+    this.setCaptureState("idle", message);
+  };
+
+  PhoneticsRuntime.prototype.renderCaptureStats = function() {
+    var frames = this.captureSession && this.captureSession.frames || [];
+    var duration = this.captureSession ? Math.round(this.captureSession.durationMs || 0) : 0;
+    var phases = this.captureAnalysis && this.captureAnalysis.phases || [];
+    this.elements.captureStats.innerHTML = '<span><small>Frames</small><strong>' + frames.length + '</strong></span>' +
+      '<span><small>Duration</small><strong>' + duration + ' ms</strong></span>' +
+      '<span><small>Phases</small><strong>' + phases.length + '</strong></span>';
+  };
+
+  PhoneticsRuntime.prototype.renderCaptureTimeline = function() {
+    if (!this.captureTimeline) return;
+    var frames = this.captureSession && this.captureSession.frames || [];
+    var duration = this.captureSession ? Math.max(1, this.captureSession.durationMs || (frames.length ? frames[frames.length - 1].t + 17 : 1)) : 1;
+    this.captureTimeline.setData({
+      frames: frames,
+      durationMs: duration,
+      phases: this.captureAnalysis && this.captureAnalysis.phases || [],
+      selection: this.captureSelection || { startMs: 0, endMs: duration },
+      selectedPhaseId: this.selectedCapturePhaseId
+    });
   };
 
   PhoneticsRuntime.prototype.startCapture = function() {
+    if (!this.draftParams || this.capture.recording) return;
     this.controller.stop(false);
-    this.capture.start();
+    this.captureDraftParams = null;
+    var template = ns.getCalibrationTemplate(this.draftParams);
+    this.captureSession = this.capture.start({ token: this.currentToken, type: template.type });
+    this.captureAnalysis = null;
+    this.captureSelection = null;
+    this.selectedCapturePhaseId = "";
+    this.renderCaptureSummary();
+    this.renderSectionChips();
+    this.setCaptureState("recording", "Recording Pink Trombone UI parameters. Perform the complete gesture, then stop.");
     var self = this;
     if (this.captureTimer) clearInterval(this.captureTimer);
     this.captureTimer = setInterval(function() {
-      self.elements.captureStats.innerHTML = '<span>Samples</span><strong>' + self.capture.samples.length + "</strong>";
+      self.captureSession = self.capture.session;
+      self.renderCaptureStats();
+      self.renderCaptureTimeline();
     }, 100);
-    this.setConfigStatus("Capturing manual articulation.");
   };
 
   PhoneticsRuntime.prototype.stopCapture = function() {
-    this.capture.stop();
+    if (!this.capture.recording) return;
+    this.captureSession = this.capture.stop();
     if (this.captureTimer) clearInterval(this.captureTimer);
     this.captureTimer = 0;
-    this.summarizeCaptureDraft("Capture draft ready. Apply or discard it.");
+    this.analyzeCapture("Take ready. Review the detected phases and drag their edges before building the draft.");
   };
 
   PhoneticsRuntime.prototype.captureCurrent = function() {
-    this.capture.samples = [this.capture.sample()];
-    this.summarizeCaptureDraft("Current posture captured. Apply or discard it.", { currentOnly: true });
-  };
-
-  PhoneticsRuntime.prototype.summarizeCaptureDraft = function(message, options) {
-    options = options || {};
     if (!this.draftParams) return;
     var template = ns.getCalibrationTemplate(this.draftParams);
-    var windowValue = this.elements.captureWindow.value || "";
-    var stage = windowValue.indexOf("frication") !== -1 ? "frication" : (windowValue.indexOf("closure") !== -1 ? "closure" : "");
-    var windowMs = windowValue.indexOf("300") !== -1 ? 300 : (windowValue.indexOf("200") !== -1 ? 200 : (windowValue.indexOf("500") !== -1 ? 500 : 0));
-    if (options.currentOnly || windowValue.indexOf("current") !== -1) this.capture.samples = [this.capture.sample()];
+    this.controller.stop(false);
+    this.captureSession = this.capture.snapshot({ token: this.currentToken, type: template.type });
+    this.analyzeCapture("Snapshot ready. Review the captured posture before building the draft.");
+  };
+
+  PhoneticsRuntime.prototype.analyzeCapture = function(message) {
+    if (!this.captureSession || !this.draftParams) return;
+    var template = ns.getCalibrationTemplate(this.draftParams);
+    this.captureAnalysis = this.capture.analyze(this.readEditor(), template.type, {
+      frames: this.captureSession.frames
+    });
+    this.captureSelection = clone(this.captureAnalysis.selection);
+    this.selectedCapturePhaseId = this.captureAnalysis.phases.length ? this.captureAnalysis.phases[0].id : "";
+    this.updateCaptureDraft();
+    this.renderCaptureStats();
+    this.renderCaptureInspector();
+    this.renderCaptureTimeline();
+    this.setCaptureState("review", message || "Take analyzed.");
+  };
+
+  PhoneticsRuntime.prototype.autoSegmentCapture = function() {
+    this.analyzeCapture("Phases detected again from the original take.");
+  };
+
+  PhoneticsRuntime.prototype.captureIncludedRange = function() {
+    var phases = this.captureAnalysis && this.captureAnalysis.phases || [];
+    var included = phases.filter(function(item) { return item.included !== false; });
+    if (!included.length) return this.captureSelection || { startMs: 0, endMs: this.captureSession ? this.captureSession.durationMs : 1 };
+    return {
+      startMs: Math.min.apply(null, included.map(function(item) { return item.startMs; })),
+      endMs: Math.max.apply(null, included.map(function(item) { return item.endMs; }))
+    };
+  };
+
+  PhoneticsRuntime.prototype.updateCaptureDraft = function() {
+    if (!this.captureSession || !this.captureAnalysis || !this.draftParams) return;
+    this.captureSelection = this.captureIncludedRange();
+    var template = ns.getCalibrationTemplate(this.draftParams);
     this.captureDraftParams = this.capture.summarize(this.readEditor(), template.type, {
-      stage: stage,
-      windowMs: windowMs,
-      existingParams: this.captureDraftParams || this.draftParams
+      frames: this.captureSession.frames,
+      analysis: this.captureAnalysis,
+      phases: this.captureAnalysis.phases,
+      range: this.captureSelection
     });
     this.renderCaptureSummary();
     this.renderSectionChips();
     this.updateOverlay();
-    this.setConfigStatus(message || "");
+  };
+
+  PhoneticsRuntime.prototype.selectCapturePhase = function(item) {
+    this.selectedCapturePhaseId = item ? item.id : "";
+    this.renderCaptureInspector();
+    this.renderCaptureTimeline();
+  };
+
+  PhoneticsRuntime.prototype.changeCapturePhase = function() {
+    this.captureSelection = this.captureIncludedRange();
+    this.updateCaptureDraft();
+    this.renderCaptureInspector();
+    this.renderCaptureTimeline();
+  };
+
+  PhoneticsRuntime.prototype.changeCaptureSelection = function(range) {
+    this.captureSelection = clone(range);
+    this.updateCaptureDraft();
+    this.renderCaptureInspector();
+  };
+
+  PhoneticsRuntime.prototype.scrubCapture = function(timeMs, frame) {
+    if (frame) this.controller.previewCaptureFrame(frame);
+    if (this.captureTimeline) this.captureTimeline.setPlayhead(timeMs);
+  };
+
+  PhoneticsRuntime.prototype.editCapturePhase = function(field, control) {
+    if (!this.captureAnalysis) return;
+    if (field === "select") {
+      this.selectedCapturePhaseId = control.value;
+      this.renderCaptureInspector();
+      this.renderCaptureTimeline();
+      return;
+    }
+    var selected = this.captureAnalysis.phases.filter(function(item) { return item.id === this.selectedCapturePhaseId; }, this)[0];
+    if (!selected) return;
+    if (field === "included") selected.included = control.checked;
+    if (field === "startMs") selected.startMs = Math.max(0, Math.min(Number(control.value), selected.endMs - 1));
+    if (field === "endMs") selected.endMs = Math.max(selected.startMs + 1, Math.min(Number(control.value), this.captureAnalysis.durationMs));
+    this.changeCapturePhase(selected);
+  };
+
+  PhoneticsRuntime.prototype.editCapturePhaseParameter = function(path, control) {
+    if (!this.captureAnalysis) return;
+    var selected = this.captureAnalysis.phases.filter(function(item) { return item.id === this.selectedCapturePhaseId; }, this)[0];
+    if (!selected) return;
+    selected.edits = selected.edits || {};
+    var value = Number(control.value);
+    if (Number.isFinite(value)) selected.edits[path] = value;
+    this.updateCaptureDraft();
+    this.renderCaptureTimeline();
+    this.setConfigStatus("Phase parameter edited. The original take remains unchanged.");
+  };
+
+  PhoneticsRuntime.prototype.renderCaptureInspector = function() {
+    if (!this.captureAnalysis || !this.captureSession) {
+      this.elements.capturePhaseInspector.innerHTML = '<p class="pt-muted">Record a take to inspect and edit its phases.</p>';
+      return;
+    }
+    var phases = this.captureAnalysis.phases || [];
+    var selected = phases.filter(function(item) { return item.id === this.selectedCapturePhaseId; }, this)[0] || phases[0];
+    if (!selected) {
+      this.elements.capturePhaseInspector.innerHTML = '<p class="pt-muted">No usable phase detected. Record again or use a snapshot.</p>';
+      return;
+    }
+    this.selectedCapturePhaseId = selected.id;
+    var frames = ns.captureFramesInRange(this.captureSession.frames, selected);
+    var stats = this.capture.summarizeFrames(frames, this.draftParams);
+    var minimum = frames.length ? ns.captureFrameFeatures(frames[Math.floor(frames.length / 2)]) : { min_index: 0, min_diameter: 0 };
+    var template = ns.getCalibrationTemplate(this.draftParams);
+    var edits = selected.edits || {};
+    var constrictionIndex = template.type === "affricate" && selected.type === "frication" ? 1 : 0;
+    var capturedConstriction = this.captureDraftParams && this.captureDraftParams.tract && this.captureDraftParams.tract.constrictions[constrictionIndex] || {};
+    function editValue(path, fallback) {
+      return edits[path] === undefined ? fallback : edits[path];
+    }
+    function parameterField(label, path, value, min, max, step) {
+      return '<label><span>' + escapeHtml(label) + '</span><input type="number" data-phase-param="' + escapeHtml(path) + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + escapeHtml(value) + '"></label>';
+    }
+    var showTongue = template.type === "vowel" || template.type === "approximant" || template.type === "other";
+    var showConstriction = ["closure", "nasal closure", "frication", "contact", "target"].indexOf(selected.type) !== -1 && template.type !== "vowel";
+    var parameterEditor = '<details class="pt-phase-parameter-editor" open><summary>Edit selected phase parameters</summary>' +
+      '<div class="pt-phase-parameter-groups">' +
+        '<fieldset><legend>Voice source</legend><div class="pt-phase-parameter-grid">' +
+          parameterField("Frequency", "glottis.ui_frequency", editValue("glottis.ui_frequency", stats.glottis.ui_frequency), 60, 400, 1) +
+          parameterField("Tenseness", "glottis.ui_tenseness", editValue("glottis.ui_tenseness", stats.glottis.ui_tenseness), 0, 1, 0.01) +
+          parameterField("Intensity", "glottis.intensity", editValue("glottis.intensity", stats.glottis.intensity), 0, 1, 0.01) +
+          parameterField("Loudness", "glottis.loudness", editValue("glottis.loudness", stats.glottis.loudness), 0, 1.5, 0.01) +
+        '</div></fieldset>' +
+        '<fieldset><legend>Velum and noise</legend><div class="pt-phase-parameter-grid">' +
+          parameterField("Velum", "tract.velum_target", editValue("tract.velum_target", stats.tract.velum_target), 0.01, 0.5, 0.01) +
+          parameterField("Turbulence", "noise.turbulence_intensity", editValue("noise.turbulence_intensity", stats.turbulence), 0, 1, 0.01) +
+        '</div></fieldset>' +
+        (showTongue ? '<fieldset><legend>Tongue and lips</legend><div class="pt-phase-parameter-grid">' +
+          parameterField("Tongue index", "tract.tongue_index", editValue("tract.tongue_index", stats.tract.tongue_index), 10, 32, 0.1) +
+          parameterField("Tongue diameter", "tract.tongue_diameter", editValue("tract.tongue_diameter", stats.tract.tongue_diameter), 1.5, 4, 0.01) +
+          parameterField("Lip diameter", "tract.lip_diameter", editValue("tract.lip_diameter", stats.tract.lip_diameter), 0, 3, 0.01) +
+        '</div></fieldset>' : '') +
+        (showConstriction ? '<fieldset><legend>Constriction</legend><div class="pt-phase-parameter-grid">' +
+          parameterField("Index", "tract.constriction.index", editValue("tract.constriction.index", capturedConstriction.index === undefined ? minimum.min_index : capturedConstriction.index), 2, 43, 0.1) +
+          parameterField("Diameter", "tract.constriction.diameter", editValue("tract.constriction.diameter", capturedConstriction.diameter === undefined ? minimum.min_diameter : capturedConstriction.diameter), 0, 2.5, 0.01) +
+          parameterField("Width", "tract.constriction.width", editValue("tract.constriction.width", capturedConstriction.width || 5), 1, 12, 0.1) +
+        '</div></fieldset>' : '') +
+      '</div></details>';
+    this.elements.capturePhaseInspector.innerHTML =
+      '<div class="pt-phase-fields">' +
+        '<label><span>Phase</span><select data-phase-field="select">' + phases.map(function(item) {
+          return '<option value="' + escapeHtml(item.id) + '"' + (item.id === selected.id ? " selected" : "") + '>' + escapeHtml(item.label) + '</option>';
+        }).join("") + '</select></label>' +
+        '<label><span>Start ms</span><input type="number" min="0" max="' + Math.round(this.captureAnalysis.durationMs) + '" step="1" data-phase-field="startMs" value="' + Math.round(selected.startMs) + '"></label>' +
+        '<label><span>End ms</span><input type="number" min="1" max="' + Math.round(this.captureAnalysis.durationMs) + '" step="1" data-phase-field="endMs" value="' + Math.round(selected.endMs) + '"></label>' +
+        '<label class="pt-inline-check"><input type="checkbox" data-phase-field="included"' + (selected.included !== false ? " checked" : "") + '> Include in draft</label>' +
+      '</div>' +
+      '<div class="pt-phase-metrics">' +
+        '<span><small>Minimum target</small><strong>' + Number(minimum.min_index || 0).toFixed(1) + ' / ' + Number(minimum.min_diameter || 0).toFixed(2) + '</strong></span>' +
+        '<span><small>Velum</small><strong>' + Number(stats.tract.velum_target).toFixed(2) + '</strong></span>' +
+        '<span><small>Turbulence</small><strong>' + Number(stats.turbulence).toFixed(2) + '</strong></span>' +
+        '<span><small>Voice intensity</small><strong>' + Number(stats.glottis.intensity).toFixed(2) + '</strong></span>' +
+      '</div>' + parameterEditor;
+  };
+
+  PhoneticsRuntime.prototype.previewCapture = function() {
+    if (!this.captureSession) return;
+    this.controller.playCapture(this.captureSession, this.captureSelection || this.captureIncludedRange(), {
+      loop: byId("loopCapture").checked
+    });
+    this.setCaptureState("preview", "Previewing the selected Pink Trombone parameter take.");
   };
 
   PhoneticsRuntime.prototype.applyCapture = function(section) {
     if (!this.captureDraftParams) return;
     if (section === "all") {
+      var selectedSections = Array.prototype.slice.call(this.elements.sectionApply.querySelectorAll("[data-capture-section]:checked")).map(function(control) {
+        return control.dataset.captureSection;
+      });
+      var template = ns.getCalibrationTemplate(this.draftParams);
+      if (selectedSections.length === template.sections.length) {
+        this.setDraftParams(this.captureDraftParams, "Draft built from the edited take.");
+        return;
+      }
+      var result = this.readEditor();
+      selectedSections.forEach(function(selectedSection) {
+        result = ns.applyCalibrationPatch(result, ns.calibrationSectionPatch(this.captureDraftParams, selectedSection));
+      }, this);
+      if (selectedSections.some(function(name) { return ["closure", "frication", "brief contact", "release", "timing"].indexOf(name) !== -1; })) {
+        result.events = clone(this.captureDraftParams.events || result.events);
+        result.gesture = clone(this.captureDraftParams.gesture || result.gesture);
+      }
+      this.setDraftParams(result, "Selected take parameters applied to the draft.");
+      return;
+    }
+    if (section === "legacy-all") {
       this.setDraftParams(this.captureDraftParams, "Capture applied to draft.");
       return;
     }
@@ -778,11 +1072,8 @@
   };
 
   PhoneticsRuntime.prototype.discardCapture = function() {
-    this.captureDraftParams = null;
-    this.renderCaptureSummary();
-    this.renderSectionChips();
-    this.updateOverlay();
-    this.setConfigStatus("Capture draft discarded.");
+    this.controller.stop(false);
+    this.resetCaptureSession("Take deleted. The draft was not changed.");
   };
 
   PhoneticsRuntime.prototype.renderCaptureSummary = function() {

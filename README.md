@@ -104,7 +104,7 @@ Useful controls:
 
 ## Recording Into The Draft
 
-Recording turns manual Pink Trombone interaction into a temporary capture draft inside Calibrate.
+Recording turns manual Pink Trombone interaction into a parameter take inside Calibrate. It never records microphone audio. The take stores the complete time-varying Pink Trombone UI state, including the 44-position tract target, source controls, velum, manual touches, turbulence, and release diagnostics.
 
 Capture behavior differs by phoneme type:
 
@@ -116,7 +116,9 @@ Capture behavior differs by phoneme type:
 - **Approximants** capture posture plus partial constriction.
 - **Taps/trills** are marked as approximate short-contact events.
 
-Use **Start capture** while manipulating the original Pink Trombone canvas, then **Stop** or **Use current posture**. The captured parameters are not saved and do not alter the phoneme until you choose **Apply capture to draft** or apply one section. You can also discard the capture draft.
+Use **Record take** while manipulating the original Pink Trombone canvas, then stop and review the automatic phases on the timeline. The tractogram and scalar tracks can be scrubbed and previewed; phase boundaries and phase parameters are editable without changing the raw take. **Build draft from take** applies only the enabled parameter groups. **Take snapshot** is available for stable single-posture targets.
+
+Stops, affricates, and taps are saved as compact gesture phases rather than frame-by-frame recordings. Carrier vowels and delays remain visible but are excluded from consonant extraction. See [CAPTURE_STUDIO.md](CAPTURE_STUDIO.md) for the complete parameter inventory, capture rules, and implementation model.
 
 ## Override Saving
 
@@ -154,7 +156,7 @@ http://localhost:8000/tests.html
 Node:
 
 ```sh
-node -e "require('./src/phonetics/MappingLoader.js'); require('./src/phonetics/IPATokenizer.js'); require('./src/phonetics/PhonemeClassifier.js'); require('./src/phonetics/ParameterDiff.js'); require('./src/phonetics/ParameterCapture.js'); require('./src/phonetics/PhonemeScheduler.js'); require('./src/phonetics/tests.js'); globalThis.Phonetics.runPhoneticsTests().then(r => { console.log(r); if (r.some(x => !x.ok)) process.exit(1); });"
+node -e "require('./src/phonetics/MappingLoader.js'); require('./src/phonetics/IPATokenizer.js'); require('./src/phonetics/PhonemeClassifier.js'); require('./src/phonetics/ParameterDiff.js'); require('./src/phonetics/ParameterCapture.js'); require('./src/phonetics/PhonemeScheduler.js'); require('./src/phonetics/PinkTromboneController.js'); require('./src/phonetics/tests.js'); globalThis.Phonetics.runPhoneticsTests().then(r => { console.log(r); if (r.some(x => !x.ok)) process.exit(1); });"
 ```
 
 ## Bibliography Provided By Original Author

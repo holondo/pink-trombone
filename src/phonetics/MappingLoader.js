@@ -233,6 +233,10 @@
       },
       features: deepClone(source.features || {}),
       events: deepClone(rawEvents),
+      gesture: deepClone(firstDefined([
+        source.gesture,
+        pink.gesture
+      ], null)),
       metadata: {
         supported: Boolean(supported),
         approximation_level: firstDefined([
@@ -259,6 +263,7 @@
     if (params.metadata.supported === undefined) params.metadata.supported = params.metadata.approximation_level !== "unsupported";
     if (!isPlainObject(params.tract)) params.tract = {};
     params.tract.constrictions = normalizeConstrictions(params.tract.constrictions || []);
+    if (params.gesture && !Array.isArray(params.gesture.phases)) params.gesture = null;
     return params;
   }
 

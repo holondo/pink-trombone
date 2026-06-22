@@ -48,6 +48,10 @@
     this.fromState = this.captureState();
     this.targetState = this.captureState();
     this.onUpdate = function() {};
+    this.onCaptureUpdate = function() {};
+    this.captureFrames = [];
+    this.captureRange = null;
+    this.captureLoop = false;
   }
 
   PinkTromboneController.prototype.ensureAudioStarted = function() {
@@ -237,6 +241,20 @@
 
   PinkTromboneController.prototype.paramsForEventStage = function(event, localMs) {
     var params = clone(event.params);
+    var gesture = params.gesture;
+    if (gesture && Array.isArray(gesture.phases) && gesture.phases.length) {
+      var gesturePhase = gesture.phases.filter(function(item) {
+        return localMs >= Number(item.start_ms || 0) && localMs < Number(item.end_ms || gesture.duration_ms || params.duration_ms || 0);
+      })[0] || gesture.phases[gesture.phases.length - 1];
+      if (gesturePhase) {
+        params = ns.deepMerge ? ns.deepMerge(params, gesturePhase.target || {}) : Object.assign(params, gesturePhase.target || {});
+        return {
+          key: "gesture-" + (gesturePhase.id || gesturePhase.type || "phase"),
+          phase: gesturePhase,
+          params: params
+        };
+      }
+    }
     var events = params.events || [];
     var closure = events.filter(function(item) {
       return item && item.type === "closure";
@@ -250,6 +268,16 @@
       params.noise.turbulence_intensity = Math.max(params.noise.turbulence_intensity || 0, 1);
       return {
         key: "fricated-release",
+        params: params
+      };
+    }
+    if (closure && !fricatedRelease && localMs >= Number(closure.duration_ms || 0)) {
+      params.tract.constrictions = [];
+      params.noise.turbulence_intensity = 0;
+      params.noise.turbulence = false;
+      params.release.transient = true;
+      return {
+        key: "release",
         params: params
       };
     }
@@ -328,7 +356,9 @@
         this.currentEvent = event;
         this.currentStageKey = stage.key;
         this.applyPhoneme(stage.params, stage.params.timing && stage.params.timing.transition_ms);
-        if (stage.key === "fricated-release" && stage.params.release && stage.params.release.transient) {
+        if ((stage.key === "fricated-release" || stage.key === "release" || (stage.phase && stage.phase.type === "release") ||
+          (stage.phase && stage.phase.target && stage.phase.target.release && stage.phase.target.release.transient)) &&
+          stage.params.release && stage.params.release.transient) {
           this.addReleaseTransient(stage.params);
         }
       } else {
@@ -351,7 +381,95 @@
   PinkTromboneController.prototype.addReleaseTransient = function(params) {
     var constrictions = params.tract && params.tract.constrictions;
     var position = constrictions && constrictions[0] ? Math.round(constrictions[0].index) : this.Tract.tipStart;
-    if (this.Tract && typeof this.Tract.addTransient === "function") this.Tract.addTransient(position);
+    if (this.Tract && typeof this.Tract.addTransient === "function") {
+      this.Tract.addTransient(position);
+      var transient = this.Tract.transients && this.Tract.transients[this.Tract.transients.length - 1];
+      if (transient) transient.strength = clamp(Number(params.release && params.release.strength || transient.strength || 0.3), 0, 1);
+    }
+  };
+
+  PinkTromboneController.prototype.applyCaptureFrame = function(frame) {
+    if (!frame) return;
+    var glottis = frame.glottis || {};
+    var tract = frame.tract || {};
+    this.Glottis.UIFrequency = Number(glottis.ui_frequency || 140);
+    this.Glottis.UITenseness = clamp(Number(glottis.ui_tenseness !== undefined ? glottis.ui_tenseness : 0.6), 0, 1);
+    this.Glottis.intensity = clamp(Number(glottis.intensity || 0), 0, 1);
+    this.Glottis.loudness = clamp(Number(glottis.loudness !== undefined ? glottis.loudness : 1), 0, 1.5);
+    this.Glottis.isTouched = Boolean(glottis.source_active || glottis.explicit_voice || glottis.voiced);
+    this.Glottis.isTouchingSomewhere = this.Glottis.isTouched;
+    if (tract.tongue_index !== null && tract.tongue_index !== undefined) this.TractUI.tongueIndex = Number(tract.tongue_index);
+    if (tract.tongue_diameter !== null && tract.tongue_diameter !== undefined) this.TractUI.tongueDiameter = Number(tract.tongue_diameter);
+    this.TractUI.setRestDiameter();
+    var target = tract.targetDiameter || tract.target_diameter || [];
+    for (var i = 0; i < this.Tract.n; i++) {
+      this.Tract.targetDiameter[i] = target[i] === undefined ? this.Tract.restDiameter[i] : Math.max(0, Number(target[i]));
+    }
+    this.Tract.velumTarget = clamp(Number(tract.velum_target === undefined ? 0.01 : tract.velum_target), 0.01, 0.5);
+    this.updateSyntheticTouches({
+      tract: {
+        constrictions: (frame.touches || []).filter(function(touch) {
+          return touch.alive !== false && Number(touch.fricative_intensity || 0) > 0;
+        }).map(function(touch) {
+          return {
+            index: Number(touch.index),
+            diameter: Math.max(0.05, Number(touch.diameter || 0.3)),
+            width: 2,
+            turbulence_intensity: Number(touch.fricative_intensity || 0)
+          };
+        })
+      },
+      noise: { turbulence_intensity: 0 }
+    }, performance.now());
+  };
+
+  PinkTromboneController.prototype.previewCaptureFrame = function(frame) {
+    if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+    this.animationFrame = 0;
+    this.active = false;
+    this.applyCaptureFrame(frame);
+  };
+
+  PinkTromboneController.prototype.playCapture = function(session, range, options) {
+    options = options || {};
+    var frames = session && session.frames || [];
+    if (!frames.length) return;
+    this.stop(false);
+    this.ensureAudioStarted();
+    this.captureFrames = frames;
+    this.captureRange = range || { startMs: 0, endMs: Number(session.durationMs || frames[frames.length - 1].t || 1) };
+    this.captureLoop = Boolean(options.loop);
+    this.active = true;
+    this.mode = "capture-preview";
+    this.startedAt = performance.now();
+    this.tickCapture();
+  };
+
+  PinkTromboneController.prototype.tickCapture = function() {
+    if (!this.active || this.mode !== "capture-preview") return;
+    var range = this.captureRange;
+    var length = Math.max(1, range.endMs - range.startMs);
+    var elapsed = performance.now() - this.startedAt;
+    if (this.captureLoop) elapsed = elapsed % length;
+    if (!this.captureLoop && elapsed > length) {
+      this.active = false;
+      this.onCaptureUpdate({ timeMs: range.endMs, done: true });
+      return;
+    }
+    var targetTime = range.startMs + elapsed;
+    var frame = this.captureFrames[0];
+    var bestDistance = Math.abs(Number(frame.t || 0) - targetTime);
+    for (var i = 1; i < this.captureFrames.length; i++) {
+      var distance = Math.abs(Number(this.captureFrames[i].t || 0) - targetTime);
+      if (distance < bestDistance) {
+        frame = this.captureFrames[i];
+        bestDistance = distance;
+      }
+    }
+    this.applyCaptureFrame(frame);
+    this.onCaptureUpdate({ timeMs: targetTime, frame: frame, done: false });
+    var self = this;
+    this.animationFrame = requestAnimationFrame(function() { self.tickCapture(); });
   };
 
   PinkTromboneController.prototype.resetToRest = function() {
@@ -373,6 +491,9 @@
     this.currentEventIndex = -1;
     this.currentEvent = null;
     this.currentStageKey = "";
+    this.captureFrames = [];
+    this.captureRange = null;
+    if (this.mode === "capture-preview") this.mode = "manual";
     this.removeSyntheticTouches();
     this.Glottis.isTouched = false;
     this.Glottis.isTouchingSomewhere = false;
